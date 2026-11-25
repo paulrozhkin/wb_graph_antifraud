@@ -7,8 +7,13 @@ def graph = JanusGraphFactory.build()
     .open()
 try {
     def g = graph.traversal()
-    new GroovyShell(new Binding([g: g])).evaluate(new File('deployment/helm/wb-graph/files/seed_history.groovy'))
-    graph.tx().commit()
+    def seed = new File('deployment/helm/wb-graph/files/seed_history.groovy')
+    2.times {
+        new GroovyShell(new Binding([g: g])).evaluate(seed)
+        graph.tx().commit()
+    }
+    assert g.V().count().next() == 3
+    assert g.E().count().next() == 5
 
     def query = new File('services/graph-service/internal/repositories/gremlin/account_history.groovy')
     def history = { id -> new GroovyShell(new Binding([g: g, accountId: id])).evaluate(query) }

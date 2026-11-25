@@ -1,0 +1,73 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-cassandra
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: cassandra
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - {name: cql, port: 9042, targetPort: cql}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-cql
+spec:
+  selector:
+    app.kubernetes.io/name: cassandra
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - {name: cql, port: 9042, targetPort: cql}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Release.Name }}-cassandra
+spec:
+  serviceName: {{ .Release.Name }}-cassandra
+  replicas: 1
+  selector:
+    matchLabels: &selector
+      app.kubernetes.io/name: cassandra
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels: *selector
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: cassandra
+          image: {{ .Values.cassandra.image | quote }}
+          imagePullPolicy: {{ .Values.cassandra.imagePullPolicy }}
+          ports:
+            - {name: cql, containerPort: 9042}
+          env:
+            - {name: MAX_HEAP_SIZE, value: 512M}
+            - {name: HEAP_NEWSIZE, value: 128M}
+            # The single-node backend advertises a stable CQL endpoint to drivers.
+            - {name: CASSANDRA_BROADCAST_RPC_ADDRESS, value: "{{ .Release.Name }}-cql"}
+          startupProbe:
+            exec:
+              command: [cqlsh, 127.0.0.1, "9042", "--connect-timeout=3", "--request-timeout=3", "-e", "SELECT release_version FROM system.local"]
+            timeoutSeconds: 8
+            periodSeconds: 5
+            failureThreshold: 36
+          readinessProbe:
+            tcpSocket: {port: cql}
+          resources:
+            {{- toYaml .Values.cassandra.resources | nindent 12 }}
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/cassandra}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- with .Values.cassandra.storage.className }}
+        storageClassName: {{ . | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.cassandra.storage.size }}

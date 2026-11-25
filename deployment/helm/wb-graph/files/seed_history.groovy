@@ -1,8 +1,8 @@
 import java.time.Instant
 
-// Each in-memory JanusGraph pod starts with an empty graph.
+// Initialize a new graph once. Existing data survives a JanusGraph restart.
 if (g.V().limit(1).hasNext()) {
-    throw new IllegalStateException('History fixture requires an empty graph')
+    return 'Skipped demo seed: graph already contains data'
 }
 def account = { id -> g.addV('account').property('account_id', id).next() }
 def anton = account('anton')

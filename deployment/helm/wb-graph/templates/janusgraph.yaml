@@ -27,6 +27,25 @@ spec:
       {{- end }}
     spec:
       automountServiceAccountToken: false
+      initContainers:
+        - name: wait-for-cassandra
+          image: {{ .Values.cassandra.image | quote }}
+          imagePullPolicy: {{ .Values.cassandra.imagePullPolicy }}
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              for attempt in $(seq 1 60); do
+                if cqlsh "$CASSANDRA_HOST" 9042 --connect-timeout=3 --request-timeout=3 -e 'SELECT release_version FROM system.local'; then
+                  exit 0
+                fi
+                sleep 2
+              done
+              exit 1
+          env:
+            - {name: CASSANDRA_HOST, value: "{{ .Release.Name }}-cql"}
+          resources:
+            requests: {cpu: 25m, memory: 32Mi}
+            limits: {memory: 128Mi}
       containers:
         - name: janusgraph
           image: {{ .Values.janusgraph.image | quote }}
@@ -34,7 +53,9 @@ spec:
           ports:
             - {name: gremlin, containerPort: 8182}
           env:
-            - {name: JANUS_PROPS_TEMPLATE, value: inmemory}
+            - {name: JANUS_PROPS_TEMPLATE, value: cql}
+            - {name: janusgraph.storage.hostname, value: "{{ .Release.Name }}-cql"}
+            - {name: janusgraph.storage.cql.replication-factor, value: "1"}
             - {name: JAVA_OPTIONS, value: "-Xms256m -Xmx512m"}
             - {name: gremlinserver.channelizer, value: org.apache.tinkerpop.gremlin.server.channel.WsAndHttpChannelizer}
             - {name: gremlinserver.evaluationTimeout, value: "4000"}

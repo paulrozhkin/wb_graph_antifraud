@@ -12,3 +12,13 @@ janusgraph:
   resources:
     requests: {cpu: 250m, memory: 768Mi}
     limits: {memory: 1536Mi}
+
+cassandra:
+  image: cassandra:4.0.20
+  imagePullPolicy: IfNotPresent
+  storage:
+    className: ""
+    size: 2Gi
+  resources:
+    requests: {cpu: 250m, memory: 768Mi}
+    limits: {memory: 1536Mi}
