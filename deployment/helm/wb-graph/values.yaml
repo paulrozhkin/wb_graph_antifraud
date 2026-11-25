@@ -1,5 +1,5 @@
 api:
-  image: wb-graph-api:0.3.0
+  image: wb-graph-api:0.4.0
   imagePullPolicy: IfNotPresent
   resources:
     requests: {cpu: 100m, memory: 64Mi}
@@ -31,3 +31,10 @@ kafka:
   resources:
     requests: {cpu: 250m, memory: 768Mi}
     limits: {memory: 1536Mi}
+
+elasticsearch:
+  image: docker.elastic.co/elasticsearch/elasticsearch:8.15.3
+  storageSize: 2Gi
+  resources:
+    requests: {cpu: 250m, memory: 1024Mi}
+    limits: {memory: 2048Mi}

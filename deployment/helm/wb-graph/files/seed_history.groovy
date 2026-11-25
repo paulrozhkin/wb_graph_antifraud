@@ -1,10 +1,13 @@
 import java.time.Instant
 
-// Initialize a new graph once. Existing data survives a JanusGraph restart.
+def names = [anton: 'Антон', vera: 'Вера', boris: 'Борис']
 if (g.V().limit(1).hasNext()) {
-    return 'Skipped demo seed: graph already contains data'
+    names.each { id, name ->
+        g.V().has('account', 'account_id', id).hasNot('account_name').property('account_name', name).iterate()
+    }
+    return 'Kept existing graph and filled missing demo names'
 }
-def account = { id -> g.addV('account').property('account_id', id).next() }
+def account = { id -> g.addV('account').property('account_id', id).property('account_name', names[id]).next() }
 def anton = account('anton')
 def vera = account('vera')
 def boris = account('boris')

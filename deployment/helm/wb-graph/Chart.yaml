@@ -1,6 +1,6 @@
 apiVersion: v2
 name: wb-graph
-description: Сервис графа переводов с Kafka, JanusGraph и Cassandra
+description: Сервис графа переводов и поиска аккаунтов
 type: application
-version: 0.4.0
-appVersion: "0.3.0"
+version: 0.5.0
+appVersion: "0.4.0"

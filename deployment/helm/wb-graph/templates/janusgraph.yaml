@@ -1,12 +1,13 @@
-{{- if .Values.janusgraph.seedDemo }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ .Release.Name }}-demo
+  name: {{ .Release.Name }}-graph-init
 data:
-  request.json: {{ dict "gremlin" (.Files.Get "files/seed_history.groovy") | toJson | quote }}
+  schema.json: {{ dict "gremlin" (.Files.Get "files/account_search_schema.groovy") | toJson | quote }}
+  {{- if .Values.janusgraph.seedDemo }}
+  seed.json: {{ dict "gremlin" (.Files.Get "files/seed_history.groovy") | toJson | quote }}
+  {{- end }}
 ---
-{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -21,10 +22,8 @@ spec:
   template:
     metadata:
       labels: *selector
-      {{- if .Values.janusgraph.seedDemo }}
       annotations:
-        checksum/demo: {{ .Files.Get "files/seed_history.groovy" | sha256sum }}
-      {{- end }}
+        checksum/init: {{ printf "%s%s" (.Files.Get "files/account_search_schema.groovy") (.Files.Get "files/seed_history.groovy") | sha256sum }}
     spec:
       automountServiceAccountToken: false
       initContainers:
@@ -46,6 +45,24 @@ spec:
           resources:
             requests: {cpu: 25m, memory: 32Mi}
             limits: {memory: 128Mi}
+        - name: wait-for-elasticsearch
+          image: {{ .Values.janusgraph.image | quote }}
+          imagePullPolicy: {{ .Values.janusgraph.imagePullPolicy }}
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              for attempt in $(seq 1 60); do
+                if curl -fsS --max-time 4 "$ELASTICSEARCH_URL/_cluster/health?wait_for_status=yellow&timeout=2s"; then
+                  exit 0
+                fi
+                sleep 2
+              done
+              exit 1
+          env:
+            - {name: ELASTICSEARCH_URL, value: "http://{{ .Release.Name }}-elasticsearch:9200"}
+          resources:
+            requests: {cpu: 25m, memory: 32Mi}
+            limits: {memory: 128Mi}
       containers:
         - name: janusgraph
           image: {{ .Values.janusgraph.image | quote }}
@@ -56,11 +73,12 @@ spec:
             - {name: JANUS_PROPS_TEMPLATE, value: cql}
             - {name: janusgraph.storage.hostname, value: "{{ .Release.Name }}-cql"}
             - {name: janusgraph.storage.cql.replication-factor, value: "1"}
+            - {name: janusgraph.index.search.backend, value: elasticsearch}
+            - {name: janusgraph.index.search.hostname, value: "{{ .Release.Name }}-elasticsearch"}
             - {name: JAVA_OPTIONS, value: "-Xms256m -Xmx512m"}
             - {name: gremlinserver.channelizer, value: org.apache.tinkerpop.gremlin.server.channel.WsAndHttpChannelizer}
             - {name: gremlinserver.evaluationTimeout, value: "4000"}
             - {name: "gremlinserver.serializers[+].className", value: org.apache.tinkerpop.gremlin.util.ser.GraphSONUntypedMessageSerializerV1}
-          {{- if .Values.janusgraph.seedDemo }}
           lifecycle:
             postStart:
               exec:
@@ -69,10 +87,12 @@ spec:
                   - -ec
                   - |
                     curl -fsS --retry 60 --retry-delay 2 --retry-connrefused --retry-max-time 150 --max-time 6 'http://127.0.0.1:8182/?gremlin=1' >/dev/null
-                    curl -fsS --max-time 15 -H 'Content-Type: application/json' --data-binary @/demo/request.json http://127.0.0.1:8182/
+                    curl -fsS --max-time 15 -H 'Content-Type: application/json' --data-binary @/graph-init/schema.json http://127.0.0.1:8182/
+                    {{- if .Values.janusgraph.seedDemo }}
+                    curl -fsS --max-time 15 -H 'Content-Type: application/json' --data-binary @/graph-init/seed.json http://127.0.0.1:8182/
+                    {{- end }}
           volumeMounts:
-            - {name: demo, mountPath: /demo, readOnly: true}
-          {{- end }}
+            - {name: graph-init, mountPath: /graph-init, readOnly: true}
           startupProbe:
             tcpSocket: {port: gremlin}
             periodSeconds: 3
@@ -82,11 +102,9 @@ spec:
             timeoutSeconds: 3
           resources:
             {{- toYaml .Values.janusgraph.resources | nindent 12 }}
-      {{- if .Values.janusgraph.seedDemo }}
       volumes:
-        - name: demo
-          configMap: {name: {{ .Release.Name }}-demo}
-      {{- end }}
+        - name: graph-init
+          configMap: {name: {{ .Release.Name }}-graph-init}
 ---
 apiVersion: v1
 kind: Service
