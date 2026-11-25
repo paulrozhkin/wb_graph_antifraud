@@ -2,7 +2,7 @@ import React, { lazy, Suspense, useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import '@fontsource-variable/inter'
 import { getJSON } from './api.js'
-import { formatAmount, formatTime } from './format.js'
+import { formatAmount, formatFeatureDate, formatTime } from './format.js'
 import './styles.css'
 
 const Graph = lazy(() => import('./Graph.jsx'))
@@ -26,7 +26,24 @@ const directions = {
   self: { label: 'Себе', symbol: '↻' },
 }
 
-function History({ account, state, retry }) {
+function RecipientFeature({ feature }) {
+  const result = feature.result
+  return (
+    <section className="recipient-feature" aria-labelledby="recipient-feature-title">
+      <div>
+        <h3 id="recipient-feature-title">Уникальных получателей за сутки</h3>
+        {result && <p>{formatFeatureDate(result.feature_date)} · UTC</p>}
+        {result?.unique_recipients === null && <p>В расчёте нет данных по аккаунту.</p>}
+        {feature.status === 'loading' && <p role="status">Загрузка расчёта…</p>}
+        {feature.status === 'unpublished' && <p>Расчёт ещё не опубликован.</p>}
+        {feature.status === 'error' && <p role="status">Расчёт временно недоступен.</p>}
+      </div>
+      {result?.unique_recipients != null && <strong>{result.unique_recipients}</strong>}
+    </section>
+  )
+}
+
+function History({ account, state, feature, retry }) {
   if (!account) {
     return (
       <section className="panel history-placeholder">
@@ -50,6 +67,7 @@ function History({ account, state, retry }) {
         </div>
       </header>
       <div className="history-body">
+        <RecipientFeature feature={feature} />
         <h3>Последние переводы</h3>
         {state.status === 'loading' && <p className="notice" role="status">Загрузка переводов…</p>}
         {state.status === 'error' && (
@@ -105,10 +123,12 @@ function App() {
   const [search, setSearch] = useState({ status: 'idle', items: [] })
   const [selection, setSelection] = useState(null)
   const [history, setHistory] = useState({ status: 'idle', items: [] })
+  const [feature, setFeature] = useState({ status: 'idle', result: null })
 
   function selectAccount(account) {
     setSelection({ account })
     setHistory({ status: 'loading', items: [] })
+    setFeature({ status: 'loading', result: null })
   }
 
   useEffect(() => {
@@ -136,6 +156,15 @@ function App() {
       })
       .catch(() => {
         if (!controller.signal.aborted) setHistory({ status: 'error', items: [] })
+      })
+    getJSON(`/api/v1/accounts/${id}/features/unique-recipients`, controller.signal)
+      .then(result => {
+        if (!controller.signal.aborted) setFeature({ status: 'ready', result })
+      })
+      .catch(error => {
+        if (!controller.signal.aborted) {
+          setFeature({ status: error.status === 404 ? 'unpublished' : 'error', result: null })
+        }
       })
     return () => controller.abort()
   }, [selection])
@@ -217,7 +246,7 @@ function App() {
                 </ul>
               )}
             </section>
-            <History account={account} state={history} retry={() => selectAccount(account)} />
+            <History account={account} state={history} feature={feature} retry={() => selectAccount(account)} />
           </div>
         )}
       </main>

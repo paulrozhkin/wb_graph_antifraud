@@ -19,7 +19,11 @@ type GraphReader interface {
 	Snapshot(context.Context) (entity.GraphSnapshot, error)
 }
 
-func NewRouter(reader GraphReader) *gin.Engine {
+type FeatureReader interface {
+	UniqueRecipients(context.Context, string) (entity.RecipientFeature, error)
+}
+
+func NewRouter(reader GraphReader, features FeatureReader) *gin.Engine {
 	router := gin.New()
 	router.Use(gin.Recovery())
 	router.StaticFile("/", "web/index.html")
@@ -31,7 +35,7 @@ func NewRouter(reader GraphReader) *gin.Engine {
 			return
 		}
 		if err != nil {
-			writeGraphError(c, err, "graph unavailable")
+			writeBackendError(c, err, "graph unavailable")
 			return
 		}
 		c.JSON(http.StatusOK, snapshot)
@@ -45,7 +49,7 @@ func NewRouter(reader GraphReader) *gin.Engine {
 		}
 		accounts, err := reader.SearchAccounts(c.Request.Context(), prefix)
 		if err != nil {
-			writeGraphError(c, err, "account search unavailable")
+			writeBackendError(c, err, "account search unavailable")
 			return
 		}
 		c.JSON(http.StatusOK, accounts)
@@ -53,15 +57,27 @@ func NewRouter(reader GraphReader) *gin.Engine {
 	router.GET("/api/v1/accounts/:account_id/transfers", func(c *gin.Context) {
 		transfers, err := reader.History(c.Request.Context(), c.Param("account_id"))
 		if err != nil {
-			writeGraphError(c, err, "transfer history unavailable")
+			writeBackendError(c, err, "transfer history unavailable")
 			return
 		}
 		c.JSON(http.StatusOK, transfers)
 	})
+	router.GET("/api/v1/accounts/:account_id/features/unique-recipients", func(c *gin.Context) {
+		feature, err := features.UniqueRecipients(c.Request.Context(), c.Param("account_id"))
+		if errors.Is(err, entity.ErrFeatureNotPublished) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "recipient feature is not published"})
+			return
+		}
+		if err != nil {
+			writeBackendError(c, err, "recipient feature unavailable")
+			return
+		}
+		c.JSON(http.StatusOK, feature)
+	})
 	return router
 }
 
-func writeGraphError(c *gin.Context, err error, message string) {
+func writeBackendError(c *gin.Context, err error, message string) {
 	log.Printf("%s: %v", message, err)
 	status := http.StatusBadGateway
 	if errors.Is(err, context.DeadlineExceeded) {

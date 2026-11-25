@@ -4,6 +4,7 @@ const timestamp = new Intl.DateTimeFormat('ru-RU', {
   timeStyle: 'short',
   timeZone: 'UTC',
 })
+const calendarDate = new Intl.DateTimeFormat('ru-RU', { dateStyle: 'long', timeZone: 'UTC' })
 
 export function formatAmount(kopecks) {
   return currency.format(kopecks / 100)
@@ -11,4 +12,8 @@ export function formatAmount(kopecks) {
 
 export function formatTime(time) {
   return timestamp.format(new Date(time))
+}
+
+export function formatFeatureDate(date) {
+  return calendarDate.format(new Date(`${date}T00:00:00Z`))
 }

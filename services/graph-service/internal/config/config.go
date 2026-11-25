@@ -38,10 +38,12 @@ type Kafka struct {
 }
 
 type HDFS struct {
-	URL     string        `mapstructure:"url" validate:"http_url"`
-	User    string        `mapstructure:"user" validate:"required"`
-	Root    string        `mapstructure:"root" validate:"startswith=/"`
-	Timeout time.Duration `mapstructure:"timeout" validate:"gt=0"`
+	URL            string        `mapstructure:"url" validate:"http_url"`
+	User           string        `mapstructure:"user" validate:"required"`
+	Root           string        `mapstructure:"root" validate:"startswith=/"`
+	Timeout        time.Duration `mapstructure:"timeout" validate:"gt=0"`
+	FeatureRoot    string        `mapstructure:"featureRoot" validate:"startswith=/"`
+	FeatureTimeout time.Duration `mapstructure:"featureTimeout" validate:"gt=0"`
 }
 
 func Load() (Config, error) {
@@ -70,6 +72,8 @@ func Load() (Config, error) {
 		"hdfs.user":              {"WB_GRAPH_HDFS_USER"},
 		"hdfs.root":              {"WB_GRAPH_HDFS_ROOT"},
 		"hdfs.timeout":           {"WB_GRAPH_HDFS_TIMEOUT"},
+		"hdfs.featureRoot":       {"WB_GRAPH_HDFS_FEATURE_ROOT"},
+		"hdfs.featureTimeout":    {"WB_GRAPH_HDFS_FEATURE_TIMEOUT"},
 	}
 	for key, names := range envs {
 		if err := v.BindEnv(append([]string{key}, names...)...); err != nil {

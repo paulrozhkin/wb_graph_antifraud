@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/segmentio/kafka-go"
-	"wb-graph/services/graph-service/internal/config"
+	"wb-graph/services/graph-service/internal/webhdfs"
 )
 
 func TestRecordPublishesOneFilePerOffset(t *testing.T) {
@@ -62,10 +62,11 @@ func TestRecordPublishesOneFilePerOffset(t *testing.T) {
 	}))
 	defer server.Close()
 
-	writer, err := New(config.HDFS{URL: server.URL, Root: "/archive/kafka", User: "hadoop", Timeout: time.Second})
+	hdfs, err := webhdfs.New(server.URL, "hadoop")
 	if err != nil {
 		t.Fatal(err)
 	}
+	writer := New(hdfs, "/archive/kafka", time.Second)
 	msg := kafka.Message{Topic: "transfers.v1", Partition: 2, Offset: 42, Value: []byte{0, 0xff, 0x12}}
 	for range 2 {
 		if _, err := writer.Record(context.Background(), msg); err != nil {

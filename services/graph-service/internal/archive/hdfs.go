@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"path"
@@ -13,24 +12,17 @@ import (
 
 	"github.com/segmentio/kafka-go"
 
-	"wb-graph/services/graph-service/internal/config"
+	"wb-graph/services/graph-service/internal/webhdfs"
 )
 
 type Writer struct {
-	cfg      config.HDFS
-	endpoint *url.URL
-	client   *http.Client
+	client  *webhdfs.Client
+	root    string
+	timeout time.Duration
 }
 
-func New(cfg config.HDFS) (*Writer, error) {
-	endpoint, err := url.Parse(cfg.URL)
-	if err != nil {
-		return nil, err
-	}
-	client := &http.Client{
-		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-	}
-	return &Writer{cfg: cfg, endpoint: endpoint, client: client}, nil
+func New(client *webhdfs.Client, root string, timeout time.Duration) *Writer {
+	return &Writer{client: client, root: root, timeout: timeout}
 }
 
 type record struct {
@@ -43,10 +35,10 @@ type record struct {
 }
 
 func (w *Writer) Record(ctx context.Context, message kafka.Message) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, w.cfg.Timeout)
+	ctx, cancel := context.WithTimeout(ctx, w.timeout)
 	defer cancel()
 
-	dir := path.Join(w.cfg.Root, message.Topic, fmt.Sprintf("partition-%d", message.Partition))
+	dir := path.Join(w.root, message.Topic, fmt.Sprintf("partition-%d", message.Partition))
 	filename := fmt.Sprintf("%020d.json", message.Offset)
 	final := path.Join(dir, filename)
 	exists, err := w.fileExists(ctx, final)
@@ -78,7 +70,7 @@ func (w *Writer) Record(ctx context.Context, message kafka.Message) (string, err
 }
 
 func (w *Writer) fileExists(ctx context.Context, filename string) (bool, error) {
-	response, err := w.request(ctx, http.MethodGet, filename, "GETFILESTATUS", url.Values{})
+	response, err := w.client.Request(ctx, http.MethodGet, filename, "GETFILESTATUS", nil)
 	if err != nil {
 		return false, err
 	}
@@ -87,7 +79,7 @@ func (w *Writer) fileExists(ctx context.Context, filename string) (bool, error) 
 		return false, nil
 	}
 	if response.StatusCode != http.StatusOK {
-		return false, statusError("GETFILESTATUS", response)
+		return false, webhdfs.StatusError("GETFILESTATUS", response)
 	}
 	var result struct {
 		FileStatus struct{ Type string }
@@ -102,42 +94,33 @@ func (w *Writer) fileExists(ctx context.Context, filename string) (bool, error) 
 }
 
 func (w *Writer) upload(ctx context.Context, staging string, document []byte) error {
-	redirect, err := w.request(ctx, http.MethodPut, staging, "CREATE", url.Values{"overwrite": {"true"}})
+	redirect, err := w.client.Request(ctx, http.MethodPut, staging, "CREATE", url.Values{"overwrite": {"true"}})
 	if err != nil {
 		return err
 	}
 	defer redirect.Body.Close()
 	if redirect.StatusCode != http.StatusTemporaryRedirect {
-		return statusError("CREATE at NameNode", redirect)
+		return webhdfs.StatusError("CREATE at NameNode", redirect)
 	}
-	destination, err := redirect.Location()
-	if err != nil {
-		return fmt.Errorf("read HDFS upload location: %w", err)
-	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPut, destination.String(), bytes.NewReader(document))
-	if err != nil {
-		return err
-	}
-	request.Header.Set("Content-Type", "application/octet-stream")
-	response, err := w.client.Do(request)
+	response, err := w.client.Follow(ctx, redirect, http.MethodPut, bytes.NewReader(document))
 	if err != nil {
 		return fmt.Errorf("upload to DataNode: %w", err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusCreated {
-		return statusError("CREATE at DataNode", response)
+		return webhdfs.StatusError("CREATE at DataNode", response)
 	}
 	return nil
 }
 
 func (w *Writer) putBoolean(ctx context.Context, filename, operation string, params url.Values) error {
-	response, err := w.request(ctx, http.MethodPut, filename, operation, params)
+	response, err := w.client.Request(ctx, http.MethodPut, filename, operation, params)
 	if err != nil {
 		return err
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return statusError(operation, response)
+		return webhdfs.StatusError(operation, response)
 	}
 	var result struct{ Boolean bool }
 	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
@@ -147,28 +130,4 @@ func (w *Writer) putBoolean(ctx context.Context, filename, operation string, par
 		return fmt.Errorf("HDFS %s returned false for %s", operation, filename)
 	}
 	return nil
-}
-
-func (w *Writer) request(ctx context.Context, method, filename, operation string, params url.Values) (*http.Response, error) {
-	target := w.endpoint.JoinPath("webhdfs/v1", filename)
-	params.Set("op", operation)
-	params.Set("user.name", w.cfg.User)
-	target.RawQuery = params.Encode()
-	request, err := http.NewRequestWithContext(ctx, method, target.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-	response, err := w.client.Do(request)
-	if err != nil {
-		return nil, fmt.Errorf("HDFS %s: %w", operation, err)
-	}
-	return response, nil
-}
-
-func statusError(operation string, response *http.Response) error {
-	var result struct {
-		RemoteException struct{ Message string }
-	}
-	_ = json.NewDecoder(io.LimitReader(response.Body, 8192)).Decode(&result)
-	return fmt.Errorf("HDFS %s returned %s: %s", operation, response.Status, result.RemoteException.Message)
 }

@@ -1,5 +1,5 @@
 api:
-  image: wb-graph-api:0.7.0
+  image: wb-graph-api:0.8.0
   imagePullPolicy: IfNotPresent
   resources:
     requests: {cpu: 100m, memory: 64Mi}

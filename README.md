@@ -1,6 +1,6 @@
 # Граф аккаунтов для антифрод-анализа
 
-Сервис загружает события переводов из Kafka в JanusGraph и обеспечивает просмотр графа, поиск аккаунтов и просмотр их переводов в браузере и через HTTP API. HTTP-сервер и Kafka consumer работают в одном Go-процессе и используют общий репозиторий графа. В графе аккаунты представлены вершинами `account`, а каждый перевод — отдельным направленным ребром `transfer` от отправителя к получателю.
+Сервис загружает события переводов из Kafka в JanusGraph и обеспечивает просмотр графа, поиск аккаунтов, историю переводов и доступ к рассчитанным признакам. HTTP-сервер и Kafka consumer работают в одном Go-процессе и используют общий репозиторий графа. В графе аккаунты представлены вершинами `account`, а каждый перевод — отдельным направленным ребром `transfer` от отправителя к получателю.
 
 ## Использованный стек
 
@@ -51,14 +51,20 @@
 
 Время указано в UTC, сумма — в копейках. При ошибке чтения графа сервис возвращает `502 Bad Gateway`, при истечении таймаута HTTP-клиента — `504 Gateway Timeout`.
 
+### Уникальные получатели за сутки
+
+`GET /api/v1/accounts/{account_id}/features/unique-recipients` возвращает `feature_date`, время публикации `published_at` и значение `unique_recipients`. API выбирает самую позднюю дату с опубликованным JSONL-набором. Если за эту дату было несколько расчётов, используется последний по времени публикации. Для аккаунта без строки в выбранном наборе значение равно `null`. Если ни одного набора ещё нет, API возвращает `404 Not Found`.
+
+В карточке аккаунта признак показан с датой UTC и загружается независимо от истории переводов. [Чтение признака из HDFS](services/graph-service/internal/repositories/features.go)
+
 ## Локальный запуск
 
 Для запуска нужны Docker Desktop в режиме Linux-контейнеров, Minikube, Helm и kubectl. Команды выполняются в PowerShell из корня репозитория.
 
 ```powershell
 minikube start -p wb-graph-lab --driver=docker --kubernetes-version=v1.35.1 --keep-context
-docker build -t wb-graph-api:0.7.0 services/graph-service
-minikube -p wb-graph-lab image load wb-graph-api:0.7.0
+docker build -t wb-graph-api:0.8.0 services/graph-service
+minikube -p wb-graph-lab image load wb-graph-api:0.8.0
 helm --kube-context wb-graph-lab upgrade --install wb-graph ./deployment/helm/wb-graph --namespace wb-graph --create-namespace --wait --timeout 4m
 kubectl --context wb-graph-lab -n wb-graph get pods,svc,pvc
 kubectl --context wb-graph-lab -n wb-graph port-forward service/wb-graph-api 18080:8080
@@ -90,6 +96,8 @@ Viper читает настройки HTTP, Gremlin и Kafka из `config.json` 
 | `WB_GRAPH_HDFS_USER` | `hdfs.user` |
 | `WB_GRAPH_HDFS_ROOT` | `hdfs.root` |
 | `WB_GRAPH_HDFS_TIMEOUT` | `hdfs.timeout` |
+| `WB_GRAPH_HDFS_FEATURE_ROOT` | `hdfs.featureRoot` |
+| `WB_GRAPH_HDFS_FEATURE_TIMEOUT` | `hdfs.featureTimeout` |
 
 ## Разработка интерфейса
 
@@ -134,7 +142,7 @@ NameNode и DataNode используют отдельные PVC. На одно�
 
 Spark считает `unique_recipients` по каждому отправителю за календарные сутки UTC. Дата берётся из времени перевода в исходном событии. Повторно доставленные записи удаляются, переводы себе исключаются. Если один ID перевода соответствует разным данным и хотя бы одна его версия попадает в расчётные сутки, запуск завершается ошибкой до публикации.
 
-Результат содержит `feature_date`, `account_id` и `unique_recipients`. Каждый запуск публикует отдельный каталог Parquet с маркером `_SUCCESS` в HDFS. Spark сначала пишет во временный каталог и затем публикует готовый набор переименованием. Повторный запуск с той же датой и ID использует уже опубликованный результат. Для пересчёта с учётом новых событий указывается новый ID. [Расчёт PySpark](deployment/helm/wb-graph/files/spark/daily_recipients.py) · [Шаблон Job](deployment/helm/wb-graph/templates/spark-job.yaml)
+Результат содержит `feature_date`, `account_id` и `unique_recipients`. Каждый запуск публикует отдельный каталог в HDFS с Parquet, файлом `_recipients.jsonl` для Go API и маркером `_SUCCESS`. Spark сначала готовит оба формата во временном каталоге и затем публикует их одним переименованием. Повторный запуск с той же датой и ID использует уже опубликованный результат. Для пересчёта с учётом новых событий или получения JSONL для старого Parquet-набора указывается новый ID. [Расчёт PySpark](deployment/helm/wb-graph/files/spark/daily_recipients.py) · [Шаблон Job](deployment/helm/wb-graph/templates/spark-job.yaml)
 
 Ручной запуск Kubernetes Job на работающем стенде
 
@@ -164,6 +172,12 @@ Airflow работает в режиме `standalone` с SQLite на отдел�
 ```powershell
 kubectl --context wb-graph-lab -n wb-graph exec wb-graph-airflow-0 -- cat /opt/airflow/state/simple_auth_manager_passwords.json.generated
 kubectl --context wb-graph-lab -n wb-graph port-forward service/wb-graph-airflow 18081:8080
+```
+
+После успешного запуска Airflow число получателей можно проверить через Go API. В веб-интерфейсе тот же признак виден, если выбрать `demo-sender` на графе и нажать «Открыть историю».
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:18080/api/v1/accounts/demo-sender/features/unique-recipients
 ```
 
 ## Хранение данных

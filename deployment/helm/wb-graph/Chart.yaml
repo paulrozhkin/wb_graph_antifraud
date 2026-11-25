@@ -2,5 +2,5 @@ apiVersion: v2
 name: wb-graph
 description: Сервис графа переводов и поиска аккаунтов
 type: application
-version: 0.10.0
-appVersion: "0.7.0"
+version: 0.11.0
+appVersion: "0.8.0"

@@ -82,9 +82,28 @@ def publish(spark, args):
 
     staging = path(f"{root}/_staging/{args.run_id}-{uuid4().hex}")
     try:
-        daily_recipients(spark, args.archive, args.date).write.mode("error").parquet(staging.toString())
+        result = daily_recipients(spark, args.archive, args.date).persist()
+        result.write.mode("error").parquet(staging.toString())
         if not fs.exists(path(staging, "_SUCCESS")):
             raise RuntimeError(f"Spark did not complete the staged result: {staging}")
+
+        # Keep the serving file hidden from Spark's normal Parquet directory scan.
+        json_dir = path(staging, "_serving")
+        result.select("account_id", "unique_recipients").coalesce(1).write.json(json_dir.toString())
+        output = path(staging, "_recipients.jsonl")
+        files = [
+            status.getPath()
+            for status in fs.listStatus(json_dir)
+            if status.isFile() and status.getPath().getName().endswith(".json")
+        ]
+        if not files:
+            fs.create(output, False).close()
+        elif len(files) != 1 or not fs.rename(files[0], output):
+            raise RuntimeError(f"Could not prepare the serving file: {output}")
+        if not fs.delete(json_dir, True):
+            raise RuntimeError(f"Could not remove temporary JSON directory: {json_dir}")
+        fs.setTimes(staging, int(datetime.now(timezone.utc).timestamp() * 1000), -1)
+
         fs.mkdirs(target.getParent())
         file_context = jvm.org.apache.hadoop.fs.FileContext.getFileContext(target.toUri(), conf)
         rename = jvm.org.apache.hadoop.fs.Options.Rename

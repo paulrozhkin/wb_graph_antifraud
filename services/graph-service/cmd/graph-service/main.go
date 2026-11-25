@@ -18,6 +18,7 @@ import (
 	"wb-graph/services/graph-service/internal/consumer"
 	httpserver "wb-graph/services/graph-service/internal/delivery/http"
 	"wb-graph/services/graph-service/internal/repositories"
+	"wb-graph/services/graph-service/internal/webhdfs"
 )
 
 func main() {
@@ -34,13 +35,15 @@ func main() {
 
 func run(ctx context.Context, cfg config.Config) error {
 	repo := repositories.NewGraphRepository(cfg.Gremlin.URL, &http.Client{Timeout: cfg.Gremlin.Timeout})
-	archiveWriter, err := archive.New(cfg.HDFS)
+	hdfs, err := webhdfs.New(cfg.HDFS.URL, cfg.HDFS.User)
 	if err != nil {
-		return fmt.Errorf("configure HDFS archive: %w", err)
+		return fmt.Errorf("configure HDFS client: %w", err)
 	}
+	archiveWriter := archive.New(hdfs, cfg.HDFS.Root, cfg.HDFS.Timeout)
+	features := repositories.NewFeatureRepository(hdfs, cfg.HDFS.FeatureRoot, cfg.HDFS.FeatureTimeout)
 	server := &http.Server{
 		Addr:              cfg.HTTP.Addr,
-		Handler:           httpserver.NewRouter(repo),
+		Handler:           httpserver.NewRouter(repo, features),
 		ReadHeaderTimeout: cfg.HTTP.ReadHeaderTimeout,
 		WriteTimeout:      cfg.HTTP.WriteTimeout,
 		IdleTimeout:       cfg.HTTP.IdleTimeout,
