@@ -1,0 +1,79 @@
+{{- if .Values.janusgraph.seedDemo }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-demo
+data:
+  request.json: {{ dict "gremlin" (.Files.Get "files/seed_history.groovy") | toJson | quote }}
+---
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-janusgraph
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: &selector
+      app.kubernetes.io/name: janusgraph
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels: *selector
+      {{- if .Values.janusgraph.seedDemo }}
+      annotations:
+        checksum/demo: {{ .Files.Get "files/seed_history.groovy" | sha256sum }}
+      {{- end }}
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: janusgraph
+          image: {{ .Values.janusgraph.image | quote }}
+          imagePullPolicy: {{ .Values.janusgraph.imagePullPolicy }}
+          ports:
+            - {name: gremlin, containerPort: 8182}
+          env:
+            - {name: JANUS_PROPS_TEMPLATE, value: inmemory}
+            - {name: JAVA_OPTIONS, value: "-Xms256m -Xmx512m"}
+            - {name: gremlinserver.channelizer, value: org.apache.tinkerpop.gremlin.server.channel.WsAndHttpChannelizer}
+            - {name: gremlinserver.evaluationTimeout, value: "4000"}
+            - {name: "gremlinserver.serializers[+].className", value: org.apache.tinkerpop.gremlin.util.ser.GraphSONUntypedMessageSerializerV1}
+          {{- if .Values.janusgraph.seedDemo }}
+          lifecycle:
+            postStart:
+              exec:
+                command:
+                  - /bin/sh
+                  - -ec
+                  - |
+                    curl -fsS --retry 60 --retry-delay 2 --retry-connrefused --retry-max-time 150 --max-time 6 'http://127.0.0.1:8182/?gremlin=1' >/dev/null
+                    curl -fsS --max-time 15 -H 'Content-Type: application/json' --data-binary @/demo/request.json http://127.0.0.1:8182/
+          volumeMounts:
+            - {name: demo, mountPath: /demo, readOnly: true}
+          {{- end }}
+          startupProbe:
+            tcpSocket: {port: gremlin}
+            periodSeconds: 3
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: {path: "/?gremlin=1", port: gremlin}
+            timeoutSeconds: 3
+          resources:
+            {{- toYaml .Values.janusgraph.resources | nindent 12 }}
+      {{- if .Values.janusgraph.seedDemo }}
+      volumes:
+        - name: demo
+          configMap: {name: {{ .Release.Name }}-demo}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-janusgraph
+spec:
+  selector:
+    app.kubernetes.io/name: janusgraph
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - {name: gremlin, port: 8182, targetPort: gremlin}
