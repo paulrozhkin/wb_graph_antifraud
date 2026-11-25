@@ -1,0 +1,15 @@
+{{- if .Values.spark.run.enabled }}
+{{- $run := required "spark.run.id is required" .Values.spark.run.id }}
+{{- $date := required "spark.run.date is required" .Values.spark.run.date }}
+{{- if not (regexMatch "^[a-z0-9]([-a-z0-9]{0,18}[a-z0-9])?$" $run) }}
+{{- fail "spark.run.id must contain 1-20 lowercase letters, digits or internal dashes" }}
+{{- end }}
+{{- if not (regexMatch "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" $date) }}
+{{- fail "spark.run.date must use YYYY-MM-DD" }}
+{{- end }}
+{{- $name := printf "%s-spark-%s" (.Release.Name | trunc 32 | trimSuffix "-") $run }}
+{{- $job := dict "root" . "name" $name "scriptName" $name "date" $date "runID" $run }}
+{{ include "wb-graph.sparkScript" $job }}
+---
+{{ include "wb-graph.sparkJob" $job }}
+{{- end }}

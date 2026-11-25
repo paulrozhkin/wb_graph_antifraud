@@ -42,8 +42,29 @@ elasticsearch:
 
 hdfs:
   image: apache/hadoop:3.4.2
+  archiveRoot: /archive/kafka
   metadataSize: 1Gi
   dataSize: 2Gi
   resources:
     requests: {cpu: 150m, memory: 512Mi}
     limits: {memory: 1024Mi}
+
+spark:
+  image: apache/spark:3.5.8-scala2.12-java17-python3-ubuntu
+  featureRoot: /features
+  run:
+    enabled: false
+    id: ""
+    date: ""
+  resources:
+    requests: {cpu: 500m, memory: 1Gi}
+    limits: {cpu: "2", memory: 1536Mi}
+
+airflow:
+  enabled: true
+  image: apache/airflow:3.4.0-python3.12
+  schedule: "0 1 * * *"
+  storageSize: 1Gi
+  resources:
+    requests: {cpu: 350m, memory: 768Mi}
+    limits: {memory: 2048Mi}

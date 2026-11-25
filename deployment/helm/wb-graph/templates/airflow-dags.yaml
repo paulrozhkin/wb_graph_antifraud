@@ -1,0 +1,16 @@
+{{- if .Values.airflow.enabled }}
+{{- $name := printf "%s-spark" (.Release.Name | trunc 32 | trimSuffix "-") }}
+{{- $script := printf "%s-spark-script" .Release.Name }}
+{{- $job := dict "root" . "name" $name "scriptName" $script "date" "" "runID" "" }}
+{{ include "wb-graph.sparkScript" $job }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-airflow-dags
+data:
+  daily_recipients_dag.py: |
+    {{- .Files.Get "files/airflow/daily_recipients_dag.py" | nindent 4 }}
+  spark_job.json: |
+    {{- include "wb-graph.sparkJob" $job | fromYaml | toPrettyJson | nindent 4 }}
+{{- end }}

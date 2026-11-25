@@ -1,0 +1,106 @@
+{{- if .Values.airflow.enabled }}
+{{- $name := printf "%s-airflow" .Release.Name }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $name }}
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $name }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+spec:
+  selector:
+    app.kubernetes.io/name: airflow
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - {name: http, port: 8080, targetPort: http}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $name }}
+spec:
+  serviceName: {{ $name }}
+  replicas: 1
+  selector:
+    matchLabels: &airflow
+      app.kubernetes.io/name: airflow
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels: *airflow
+      annotations:
+        checksum/dags: {{ include (print $.Template.BasePath "/airflow-dags.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: {{ $name }}
+      securityContext: {runAsUser: 50000, runAsGroup: 0, fsGroup: 0}
+      containers:
+        - name: airflow
+          image: {{ .Values.airflow.image | quote }}
+          imagePullPolicy: IfNotPresent
+          args: [standalone]
+          ports:
+            - {name: http, containerPort: 8080}
+          env:
+            - {name: AIRFLOW_HOME, value: /opt/airflow/state}
+            - {name: AIRFLOW__CORE__DAGS_FOLDER, value: /opt/airflow/dags}
+            - {name: AIRFLOW__CORE__LOAD_EXAMPLES, value: "False"}
+            - {name: AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION, value: "False"}
+            - {name: AIRFLOW__CORE__PARALLELISM, value: "2"}
+            - {name: AIRFLOW__DAG_PROCESSOR__PARSING_PROCESSES, value: "1"}
+            - {name: AIRFLOW__API__WORKERS, value: "1"}
+            - {name: PYTHONDONTWRITEBYTECODE, value: "1"}
+            - name: WB_GRAPH_NAMESPACE
+              valueFrom:
+                fieldRef: {fieldPath: metadata.namespace}
+            - {name: WB_GRAPH_SPARK_SCHEDULE, value: {{ .Values.airflow.schedule | quote }}}
+            - {name: WB_GRAPH_FEATURE_ROOT, value: {{ .Values.spark.featureRoot | quote }}}
+            - {name: WB_GRAPH_WEBHDFS_URL, value: "http://{{ .Release.Name }}-hdfs-namenode:9870"}
+          startupProbe:
+            httpGet: {path: /api/v2/monitor/health, port: http}
+            periodSeconds: 5
+            failureThreshold: 48
+          readinessProbe:
+            httpGet: {path: /api/v2/monitor/health, port: http}
+            timeoutSeconds: 4
+          resources:
+            {{- toYaml .Values.airflow.resources | nindent 12 }}
+          volumeMounts:
+            - {name: state, mountPath: /opt/airflow/state}
+            - {name: dags, mountPath: /opt/airflow/dags/daily_recipients_dag.py, subPath: daily_recipients_dag.py, readOnly: true}
+            - {name: dags, mountPath: /opt/airflow/dags/spark_job.json, subPath: spark_job.json, readOnly: true}
+      volumes:
+        - name: dags
+          configMap: {name: {{ .Release.Name }}-airflow-dags}
+  volumeClaimTemplates:
+    - metadata:
+        name: state
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: {{ .Values.airflow.storageSize }}
+{{- end }}

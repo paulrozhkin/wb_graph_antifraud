@@ -11,6 +11,8 @@
 - **Apache Cassandra 4.0.20** — постоянное хранилище графа. JanusGraph подключается к Cassandra по CQL.
 - **Elasticsearch 8.15.3** — поисковый индекс имён аккаунтов. JanusGraph обновляет индекс при записи свойств вершины.
 - **Apache Hadoop 3.4.2 / HDFS** — хранение исходных сообщений Kafka для пакетной обработки.
+- **Apache Spark 3.5.8 / PySpark** — расчёт суточных признаков с публикацией результатов в Parquet.
+- **Apache Airflow 3.4.0** — запуск и контроль суточного расчёта.
 - **Docker, Kubernetes, Helm** — сборка образа API и развёртывание сервиса и базы. Для локального запуска используется Minikube.
 
 ## API сервиса
@@ -128,6 +130,42 @@ $event = $raw | ConvertFrom-Json
 
 NameNode и DataNode используют отдельные PVC. На одном DataNode коэффициент репликации равен единице. Адрес архива внутри кластера — `hdfs://wb-graph-hdfs-namenode:8020/archive/kafka`. [Шаблон HDFS](deployment/helm/wb-graph/templates/hdfs.yaml)
 
+## Пакетный расчёт в Spark
+
+Spark считает `unique_recipients` по каждому отправителю за календарные сутки UTC. Дата берётся из времени перевода в исходном событии. Повторно доставленные записи удаляются, переводы себе исключаются. Если один ID перевода соответствует разным данным и хотя бы одна его версия попадает в расчётные сутки, запуск завершается ошибкой до публикации.
+
+Результат содержит `feature_date`, `account_id` и `unique_recipients`. Каждый запуск публикует отдельный каталог Parquet с маркером `_SUCCESS` в HDFS. Spark сначала пишет во временный каталог и затем публикует готовый набор переименованием. Повторный запуск с той же датой и ID использует уже опубликованный результат. Для пересчёта с учётом новых событий указывается новый ID. [Расчёт PySpark](deployment/helm/wb-graph/files/spark/daily_recipients.py) · [Шаблон Job](deployment/helm/wb-graph/templates/spark-job.yaml)
+
+Ручной запуск Kubernetes Job на работающем стенде
+
+```powershell
+helm template wb-graph ./deployment/helm/wb-graph --namespace wb-graph --show-only templates/spark-job.yaml --set spark.run.enabled=true --set-string spark.run.id=manual-1 --set-string spark.run.date=2026-11-26 | kubectl --context wb-graph-lab -n wb-graph create -f -
+kubectl --context wb-graph-lab -n wb-graph wait --for=condition=complete job/wb-graph-spark-manual-1 --timeout=5m
+kubectl --context wb-graph-lab -n wb-graph logs job/wb-graph-spark-manual-1
+kubectl --context wb-graph-lab -n wb-graph exec wb-graph-hdfs-namenode-0 -- hdfs dfs -ls /features/unique-recipients/2026-11-26/manual-1
+```
+
+Spark использует два потока в одном поде (`local[2]`). В демонстрационном архиве повторные сообщения о переводах от `demo-sender` дают трёх уникальных получателей за 26 ноября 2026 года.
+
+## Оркестрация в Airflow
+
+DAG `daily_unique_recipients` ежедневно в 01:00 UTC запускает расчёт за предыдущие календарные сутки UTC. Airflow создаёт Kubernetes Job из общего шаблона Spark, дожидается его завершения и проверяет наличие `_SUCCESS` в HDFS. У каждой попытки свой Job, а ID опубликованного набора сохраняется в пределах одного запуска DAG. [Код DAG](deployment/helm/wb-graph/files/airflow/daily_recipients_dag.py) · [Общий шаблон Spark Job](deployment/helm/wb-graph/templates/_spark.tpl)
+
+Ручной запуск с явно заданной датой расчёта
+
+```powershell
+$af = @('--context', 'wb-graph-lab', '-n', 'wb-graph', 'exec', 'wb-graph-airflow-0', '--', 'airflow')
+kubectl @af dags trigger daily_unique_recipients --run-id manual-2026-11-26 --conf '{"feature_date":"2026-11-26"}'
+kubectl @af tasks states-for-dag-run daily_unique_recipients manual-2026-11-26
+```
+
+Airflow работает в режиме `standalone` с SQLite на отдельном PVC. Расписание задаётся параметром `airflow.schedule` в Helm. Веб-интерфейс можно открыть через проброс порта на [127.0.0.1:18081](http://127.0.0.1:18081/). Airflow генерирует пароль пользователя `admin` при первом запуске.
+
+```powershell
+kubectl --context wb-graph-lab -n wb-graph exec wb-graph-airflow-0 -- cat /opt/airflow/state/simple_auth_manager_passwords.json.generated
+kubectl --context wb-graph-lab -n wb-graph port-forward service/wb-graph-airflow 18081:8080
+```
+
 ## Хранение данных
 
 Cassandra развёрнута как одноузловой StatefulSet. Для её каталога данных Kubernetes выделяет PersistentVolume через PVC `data-wb-graph-cassandra-0`. Граф сохраняется при пересоздании подов JanusGraph и Cassandra, пока существует том. Cassandra передаёт драйверу адрес Kubernetes Service `wb-graph-cql`, который сохраняется при смене IP пода. [Шаблон Cassandra](deployment/helm/wb-graph/templates/cassandra.yaml)
@@ -141,4 +179,3 @@ Elasticsearch развёрнут как одноузловой StatefulSet с п
 ## План развития
 
 - **Обработка событий.** Добавить отдельный топик для некорректных сообщений и обработку изменений статуса перевода.
-- **Spark и Airflow.** Считать по архиву HDFS число уникальных получателей по каждому аккаунту за сутки и запускать расчёт по расписанию через Airflow.
