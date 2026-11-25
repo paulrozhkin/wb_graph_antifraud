@@ -4,6 +4,7 @@ metadata:
   name: {{ .Release.Name }}-api
 spec:
   replicas: 1
+  strategy: {type: Recreate}
   selector:
     matchLabels: &selector
       app.kubernetes.io/name: graph-api
@@ -13,17 +14,35 @@ spec:
       labels: *selector
     spec:
       automountServiceAccountToken: false
+      initContainers:
+        - name: create-topic
+          image: {{ .Values.kafka.image | quote }}
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              /opt/kafka/bin/kafka-topics.sh --bootstrap-server "$KAFKA_BROKER" \
+                --create --if-not-exists --topic "$KAFKA_TOPIC" --partitions 1 --replication-factor 1
+          env:
+            - {name: KAFKA_BROKER, value: "{{ .Release.Name }}-kafka:9092"}
+            - {name: KAFKA_TOPIC, value: {{ .Values.kafka.topic | quote }}}
+            - {name: KAFKA_HEAP_OPTS, value: "-Xms64m -Xmx128m"}
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {memory: 256Mi}
       containers:
-        - name: api
+        - name: graph-service
           image: {{ .Values.api.image | quote }}
           imagePullPolicy: {{ .Values.api.imagePullPolicy }}
           ports:
             - {name: http, containerPort: 8080}
           env:
-            - {name: HTTP_ADDR, value: ":8080"}
             - {name: GIN_MODE, value: release}
-            - name: GREMLIN_URL
-              value: "http://{{ .Release.Name }}-janusgraph:8182"
+            - {name: WB_GRAPH_HTTP_ADDR, value: ":8080"}
+            - {name: WB_GRAPH_GREMLIN_URL, value: "http://{{ .Release.Name }}-janusgraph:8182"}
+            - {name: WB_GRAPH_KAFKA_BROKER, value: "{{ .Release.Name }}-kafka:9092"}
+            - {name: WB_GRAPH_KAFKA_TOPIC, value: {{ .Values.kafka.topic | quote }}}
+            - {name: WB_GRAPH_KAFKA_GROUP_ID, value: {{ .Values.kafka.groupID | quote }}}
           readinessProbe:
             tcpSocket: {port: http}
           livenessProbe:

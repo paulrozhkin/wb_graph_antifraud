@@ -37,6 +37,25 @@ try {
     assert limited.size() == 20
     assert limited.take(4) == rows
     println 'Account history checks passed'
+
+    def writeQuery = new File('services/graph-service/internal/repositories/gremlin/record_transfer.groovy')
+    def record = { id, amount ->
+        new GroovyShell(new Binding([g: g, transactionId: id, fromAccountId: 'anna',
+            toAccountId: 'vera', timeMillis: Instant.parse('2026-11-26T13:00:00Z').toEpochMilli(),
+            amountKopecks: amount])).evaluate(writeQuery)
+    }
+    assert record('stream-1', 50000) == 'created'
+    graph.tx().commit()
+    assert record('stream-1', 50000) == 'replayed'
+    graph.tx().commit()
+    assert record('stream-1', 40000) == 'conflict'
+    graph.tx().commit()
+    assert record('stream-2', 50000) == 'created'
+    graph.tx().commit()
+    assert history('anna')*.transaction_id == ['stream-1', 'stream-2']
+    assert history('anna')*.amount_kopecks == [50000L, 50000L]
+    assert g.V().has('account_id', 'anna').count().next() == 1
+    println 'Transfer replay checks passed'
 } finally {
     graph.close()
 }

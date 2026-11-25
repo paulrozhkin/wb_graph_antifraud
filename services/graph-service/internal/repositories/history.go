@@ -15,58 +15,71 @@ import (
 //go:embed gremlin/account_history.groovy
 var historyQuery string
 
-type HistoryRepository struct {
+type GraphRepository struct {
 	endpoint string
 	client   *http.Client
 }
 
-func NewHistoryRepository(endpoint string, client *http.Client) *HistoryRepository {
-	return &HistoryRepository{endpoint: endpoint, client: client}
+func NewGraphRepository(endpoint string, client *http.Client) *GraphRepository {
+	return &GraphRepository{endpoint: endpoint, client: client}
 }
 
-func (r *HistoryRepository) History(ctx context.Context, accountID string) ([]entity.Transfer, error) {
+func (r *GraphRepository) History(ctx context.Context, accountID string) ([]entity.Transfer, error) {
+	// Untyped GraphSON encodes java.util.Date as Unix milliseconds.
+	var rows []struct {
+		entity.Transfer
+		Millis int64 `json:"time"`
+	}
+	if err := r.execute(ctx, historyQuery, map[string]any{"accountId": accountID}, &rows); err != nil {
+		return nil, err
+	}
+	transfers := make([]entity.Transfer, 0, len(rows))
+	for _, row := range rows {
+		row.Transfer.Time = time.UnixMilli(row.Millis).UTC()
+		transfers = append(transfers, row.Transfer)
+	}
+	return transfers, nil
+}
+
+func (r *GraphRepository) execute(ctx context.Context, script string, bindings map[string]any, data any) error {
 	body, err := json.Marshal(map[string]any{
-		"gremlin":  historyQuery,
-		"bindings": map[string]string{"accountId": accountID},
+		"gremlin":  script,
+		"bindings": bindings,
 	})
 	if err != nil {
-		return nil, err
+		return err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, r.endpoint, bytes.NewReader(body))
 	if err != nil {
-		return nil, err
+		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/vnd.gremlin-v1.0+json;types=false")
 	resp, err := r.client.Do(req)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Gremlin HTTP status %d", resp.StatusCode)
+		return fmt.Errorf("Gremlin HTTP status %d", resp.StatusCode)
 	}
 
-	// Untyped GraphSON encodes java.util.Date as Unix milliseconds.
 	var result struct {
-		Status struct{ Code int }
+		Status struct {
+			Code int
+		}
 		Result struct {
-			Data []struct {
-				entity.Transfer
-				Millis int64 `json:"time"`
-			}
+			Data json.RawMessage
 		}
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("decode Gremlin response: %w", err)
+		return fmt.Errorf("decode Gremlin response: %w", err)
 	}
-	if result.Status.Code != http.StatusOK || result.Result.Data == nil {
-		return nil, fmt.Errorf("unexpected Gremlin result (status %d)", result.Status.Code)
+	if result.Status.Code != http.StatusOK || len(result.Result.Data) == 0 || bytes.Equal(result.Result.Data, []byte("null")) {
+		return fmt.Errorf("unexpected Gremlin result (status %d)", result.Status.Code)
 	}
-	transfers := make([]entity.Transfer, 0, len(result.Result.Data))
-	for _, row := range result.Result.Data {
-		row.Transfer.Time = time.UnixMilli(row.Millis).UTC()
-		transfers = append(transfers, row.Transfer)
+	if err := json.Unmarshal(result.Result.Data, data); err != nil {
+		return fmt.Errorf("decode Gremlin result: %w", err)
 	}
-	return transfers, nil
+	return nil
 }
