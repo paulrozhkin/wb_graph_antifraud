@@ -12,6 +12,7 @@ type Config struct {
 	HTTP    HTTP    `mapstructure:"http"`
 	Gremlin Gremlin `mapstructure:"gremlin"`
 	Kafka   Kafka   `mapstructure:"kafka"`
+	HDFS    HDFS    `mapstructure:"hdfs"`
 }
 
 type HTTP struct {
@@ -28,11 +29,19 @@ type Gremlin struct {
 }
 
 type Kafka struct {
-	Broker        string        `mapstructure:"broker" validate:"required"`
-	Topic         string        `mapstructure:"topic" validate:"required"`
-	GroupID       string        `mapstructure:"groupId" validate:"required"`
-	CommitTimeout time.Duration `mapstructure:"commitTimeout" validate:"gt=0"`
-	RetryInterval time.Duration `mapstructure:"retryInterval" validate:"gt=0"`
+	Broker         string        `mapstructure:"broker" validate:"required"`
+	Topic          string        `mapstructure:"topic" validate:"required"`
+	GroupID        string        `mapstructure:"groupId" validate:"required"`
+	ArchiveGroupID string        `mapstructure:"archiveGroupId" validate:"required,nefield=GroupID"`
+	CommitTimeout  time.Duration `mapstructure:"commitTimeout" validate:"gt=0"`
+	RetryInterval  time.Duration `mapstructure:"retryInterval" validate:"gt=0"`
+}
+
+type HDFS struct {
+	URL     string        `mapstructure:"url" validate:"http_url"`
+	User    string        `mapstructure:"user" validate:"required"`
+	Root    string        `mapstructure:"root" validate:"startswith=/"`
+	Timeout time.Duration `mapstructure:"timeout" validate:"gt=0"`
 }
 
 func Load() (Config, error) {
@@ -54,8 +63,13 @@ func Load() (Config, error) {
 		"kafka.broker":           {"WB_GRAPH_KAFKA_BROKER", "KAFKA_BROKER"},
 		"kafka.topic":            {"WB_GRAPH_KAFKA_TOPIC", "KAFKA_TOPIC"},
 		"kafka.groupId":          {"WB_GRAPH_KAFKA_GROUP_ID", "KAFKA_GROUP_ID"},
+		"kafka.archiveGroupId":   {"WB_GRAPH_KAFKA_ARCHIVE_GROUP_ID"},
 		"kafka.commitTimeout":    {"WB_GRAPH_KAFKA_COMMIT_TIMEOUT"},
 		"kafka.retryInterval":    {"WB_GRAPH_KAFKA_RETRY_INTERVAL"},
+		"hdfs.url":               {"WB_GRAPH_HDFS_URL"},
+		"hdfs.user":              {"WB_GRAPH_HDFS_USER"},
+		"hdfs.root":              {"WB_GRAPH_HDFS_ROOT"},
+		"hdfs.timeout":           {"WB_GRAPH_HDFS_TIMEOUT"},
 	}
 	for key, names := range envs {
 		if err := v.BindEnv(append([]string{key}, names...)...); err != nil {

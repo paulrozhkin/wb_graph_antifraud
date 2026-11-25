@@ -10,6 +10,7 @@
 - **JanusGraph 1.1.0, Gremlin** — модель графа и выборка переводов.
 - **Apache Cassandra 4.0.20** — постоянное хранилище графа. JanusGraph подключается к Cassandra по CQL.
 - **Elasticsearch 8.15.3** — поисковый индекс имён аккаунтов. JanusGraph обновляет индекс при записи свойств вершины.
+- **Apache Hadoop 3.4.2 / HDFS** — хранение исходных сообщений Kafka для пакетной обработки.
 - **Docker, Kubernetes, Helm** — сборка образа API и развёртывание сервиса и базы. Для локального запуска используется Minikube.
 
 ## API сервиса
@@ -54,8 +55,8 @@
 
 ```powershell
 minikube start -p wb-graph-lab --driver=docker --kubernetes-version=v1.35.1 --keep-context
-docker build -t wb-graph-api:0.6.1 services/graph-service
-minikube -p wb-graph-lab image load wb-graph-api:0.6.1
+docker build -t wb-graph-api:0.7.0 services/graph-service
+minikube -p wb-graph-lab image load wb-graph-api:0.7.0
 helm --kube-context wb-graph-lab upgrade --install wb-graph ./deployment/helm/wb-graph --namespace wb-graph --create-namespace --wait --timeout 4m
 kubectl --context wb-graph-lab -n wb-graph get pods,svc,pvc
 kubectl --context wb-graph-lab -n wb-graph port-forward service/wb-graph-api 18080:8080
@@ -82,6 +83,11 @@ Viper читает настройки HTTP, Gremlin и Kafka из `config.json` 
 | `WB_GRAPH_KAFKA_BROKER` | `kafka.broker` |
 | `WB_GRAPH_KAFKA_TOPIC` | `kafka.topic` |
 | `WB_GRAPH_KAFKA_GROUP_ID` | `kafka.groupId` |
+| `WB_GRAPH_KAFKA_ARCHIVE_GROUP_ID` | `kafka.archiveGroupId` |
+| `WB_GRAPH_HDFS_URL` | `hdfs.url` |
+| `WB_GRAPH_HDFS_USER` | `hdfs.user` |
+| `WB_GRAPH_HDFS_ROOT` | `hdfs.root` |
+| `WB_GRAPH_HDFS_TIMEOUT` | `hdfs.timeout` |
 
 ## Разработка интерфейса
 
@@ -104,6 +110,24 @@ Invoke-RestMethod http://127.0.0.1:18080/api/v1/accounts/demo-recipient/transfer
 
 При первом запуске в логе consumer появляются `created` и `replayed` с разными offset. В истории получателя появляется одна операция `kafka-demo-1`.
 
+## Архив сообщений в HDFS
+
+Go-сервис читает `transfers.v1` двумя группами. `graph-ingestion` загружает переводы в JanusGraph, а `graph-archive` сохраняет каждое исходное сообщение в HDFS, включая повторы и сообщения с некорректным содержимым. При первом запуске архива группа читает сообщения с начала доступной истории Kafka.
+
+Каждому offset соответствует файл `/archive/kafka/<topic>/partition-<номер>/<offset>.json`. В нём одна JSON-запись с топиком, партицией, offset, временем Kafka и исходными ключом и значением в Base64. Сервис загружает временный файл через WebHDFS, публикует его переименованием и затем подтверждает offset. Повторная обработка того же offset использует уже опубликованный файл. В стенде на одно сообщение приходится один файл. [Код архива](services/graph-service/internal/archive/hdfs.go)
+
+Пример просмотра файлов и декодирования сообщения с offset 0 в PowerShell
+
+```powershell
+$hdfs = @('--context', 'wb-graph-lab', '-n', 'wb-graph', 'exec', 'wb-graph-hdfs-namenode-0', '--', 'hdfs', 'dfs')
+kubectl @hdfs -ls /archive/kafka/transfers.v1/partition-0
+$raw = kubectl @hdfs -cat /archive/kafka/transfers.v1/partition-0/00000000000000000000.json
+$event = $raw | ConvertFrom-Json
+[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($event.value_base64))
+```
+
+NameNode и DataNode используют отдельные PVC. На одном DataNode коэффициент репликации равен единице. Адрес архива внутри кластера — `hdfs://wb-graph-hdfs-namenode:8020/archive/kafka`. [Шаблон HDFS](deployment/helm/wb-graph/templates/hdfs.yaml)
+
 ## Хранение данных
 
 Cassandra развёрнута как одноузловой StatefulSet. Для её каталога данных Kubernetes выделяет PersistentVolume через PVC `data-wb-graph-cassandra-0`. Граф сохраняется при пересоздании подов JanusGraph и Cassandra, пока существует том. Cassandra передаёт драйверу адрес Kubernetes Service `wb-graph-cql`, который сохраняется при смене IP пода. [Шаблон Cassandra](deployment/helm/wb-graph/templates/cassandra.yaml)
@@ -117,4 +141,4 @@ Elasticsearch развёрнут как одноузловой StatefulSet с п
 ## План развития
 
 - **Обработка событий.** Добавить отдельный топик для некорректных сообщений и обработку изменений статуса перевода.
-- **Hadoop HDFS, Spark и Airflow.** Сохранять события в HDFS, считать в Spark число уникальных получателей по каждому аккаунту за сутки и запускать расчёт по расписанию через Airflow.
+- **Spark и Airflow.** Считать по архиву HDFS число уникальных получателей по каждому аккаунту за сутки и запускать расчёт по расписанию через Airflow.

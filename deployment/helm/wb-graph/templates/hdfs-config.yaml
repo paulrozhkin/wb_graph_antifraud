@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-hdfs-config
+data:
+  CORE-SITE.XML_fs.defaultFS: "hdfs://{{ .Release.Name }}-hdfs-namenode:8020"
+  HDFS-SITE.XML_dfs.namenode.rpc-bind-host: "0.0.0.0"
+  HDFS-SITE.XML_dfs.namenode.name.dir: "file:///data/name"
+  HDFS-SITE.XML_dfs.datanode.data.dir: "file:///data/blocks"
+  HDFS-SITE.XML_dfs.replication: "1"
+  HDFS-SITE.XML_dfs.webhdfs.enabled: "true"
+  HADOOP_HEAPSIZE_MAX: "512"

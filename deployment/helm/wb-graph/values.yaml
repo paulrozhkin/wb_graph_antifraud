@@ -1,5 +1,5 @@
 api:
-  image: wb-graph-api:0.6.1
+  image: wb-graph-api:0.7.0
   imagePullPolicy: IfNotPresent
   resources:
     requests: {cpu: 100m, memory: 64Mi}
@@ -27,6 +27,7 @@ kafka:
   image: apache/kafka:3.9.1
   topic: transfers.v1
   groupID: graph-ingestion
+  archiveGroupID: graph-archive
   storageSize: 2Gi
   resources:
     requests: {cpu: 250m, memory: 768Mi}
@@ -38,3 +39,11 @@ elasticsearch:
   resources:
     requests: {cpu: 250m, memory: 1024Mi}
     limits: {memory: 2048Mi}
+
+hdfs:
+  image: apache/hadoop:3.4.2
+  metadataSize: 1Gi
+  dataSize: 2Gi
+  resources:
+    requests: {cpu: 150m, memory: 512Mi}
+    limits: {memory: 1024Mi}

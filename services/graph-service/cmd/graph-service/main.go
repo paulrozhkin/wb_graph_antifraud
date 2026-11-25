@@ -10,8 +10,10 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/segmentio/kafka-go"
 	"golang.org/x/sync/errgroup"
 
+	"wb-graph/services/graph-service/internal/archive"
 	"wb-graph/services/graph-service/internal/config"
 	"wb-graph/services/graph-service/internal/consumer"
 	httpserver "wb-graph/services/graph-service/internal/delivery/http"
@@ -32,6 +34,10 @@ func main() {
 
 func run(ctx context.Context, cfg config.Config) error {
 	repo := repositories.NewGraphRepository(cfg.Gremlin.URL, &http.Client{Timeout: cfg.Gremlin.Timeout})
+	archiveWriter, err := archive.New(cfg.HDFS)
+	if err != nil {
+		return fmt.Errorf("configure HDFS archive: %w", err)
+	}
 	server := &http.Server{
 		Addr:              cfg.HTTP.Addr,
 		Handler:           httpserver.NewRouter(repo),
@@ -47,7 +53,13 @@ func run(ctx context.Context, cfg config.Config) error {
 		return nil
 	})
 	group.Go(func() error {
-		consumer.Run(runCtx, cfg.Kafka, repo)
+		consumer.Run(runCtx, cfg.Kafka, cfg.Kafka.GroupID, func(ctx context.Context, message kafka.Message) (string, error) {
+			return consumer.RecordTransfer(ctx, repo, message)
+		})
+		return nil
+	})
+	group.Go(func() error {
+		consumer.Run(runCtx, cfg.Kafka, cfg.Kafka.ArchiveGroupID, archiveWriter.Record)
 		return nil
 	})
 	group.Go(func() error {

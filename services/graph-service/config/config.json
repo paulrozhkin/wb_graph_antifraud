@@ -14,7 +14,14 @@
     "broker": "127.0.0.1:19092",
     "topic": "transfers.v1",
     "groupId": "graph-ingestion",
+    "archiveGroupId": "graph-archive",
     "commitTimeout": "6s",
     "retryInterval": "5s"
+  },
+  "hdfs": {
+    "url": "http://127.0.0.1:19870",
+    "user": "hadoop",
+    "root": "/archive/kafka",
+    "timeout": "15s"
   }
 }

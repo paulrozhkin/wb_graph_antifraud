@@ -43,6 +43,8 @@ spec:
             - {name: WB_GRAPH_KAFKA_BROKER, value: "{{ .Release.Name }}-kafka:9092"}
             - {name: WB_GRAPH_KAFKA_TOPIC, value: {{ .Values.kafka.topic | quote }}}
             - {name: WB_GRAPH_KAFKA_GROUP_ID, value: {{ .Values.kafka.groupID | quote }}}
+            - {name: WB_GRAPH_KAFKA_ARCHIVE_GROUP_ID, value: {{ .Values.kafka.archiveGroupID | quote }}}
+            - {name: WB_GRAPH_HDFS_URL, value: "http://{{ .Release.Name }}-hdfs-namenode:9870"}
           readinessProbe:
             tcpSocket: {port: http}
           livenessProbe:
