@@ -56,6 +56,22 @@ try {
     assert history('anna')*.amount_kopecks == [50000L, 50000L]
     assert g.V().has('account_id', 'anna').count().next() == 1
     println 'Transfer replay checks passed'
+
+    def snapshotQuery = new File('services/graph-service/internal/repositories/gremlin/graph_snapshot.groovy')
+    def snapshot = { vertexLimit, edgeLimit ->
+        new GroovyShell(new Binding([g: g, accountScanLimit: vertexLimit, transferScanLimit: edgeLimit]))
+            .evaluate(snapshotQuery)[0]
+    }
+    def full = snapshot(250, 500)
+    assert full.accounts*.account_id.toSet() == ['anton', 'vera', 'boris', 'anna'] as Set
+    assert full.accounts.find { it.account_id == 'anna' }.name == 'anna'
+    assert full.transfers.size() == 28
+    assert full.transfers.findAll { it.from_account_id == 'vera' && it.to_account_id == 'vera' }*.transaction_id == ['t4']
+    assert full.transfers.findAll { it.from_account_id == 'anton' && it.to_account_id == 'vera' }.size() == 23
+    def bounded = snapshot(2, 5)
+    assert bounded.accounts.size() == 2
+    assert bounded.transfers.size() == 5
+    println 'Graph snapshot checks passed'
 } finally {
     graph.close()
 }

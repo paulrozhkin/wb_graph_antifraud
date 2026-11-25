@@ -16,11 +16,26 @@ import (
 type GraphReader interface {
 	History(context.Context, string) ([]entity.Transfer, error)
 	SearchAccounts(context.Context, string) ([]entity.Account, error)
+	Snapshot(context.Context) (entity.GraphSnapshot, error)
 }
 
 func NewRouter(reader GraphReader) *gin.Engine {
 	router := gin.New()
 	router.Use(gin.Recovery())
+	router.StaticFile("/", "web/index.html")
+	router.Static("/assets", "web/assets")
+	router.GET("/api/v1/graph", func(c *gin.Context) {
+		snapshot, err := reader.Snapshot(c.Request.Context())
+		if errors.Is(err, entity.ErrGraphTooLarge) {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "graph exceeds visualization limits"})
+			return
+		}
+		if err != nil {
+			writeGraphError(c, err, "graph unavailable")
+			return
+		}
+		c.JSON(http.StatusOK, snapshot)
+	})
 	router.GET("/api/v1/accounts", func(c *gin.Context) {
 		prefix := strings.TrimSpace(c.Query("q"))
 		length := utf8.RuneCountInString(prefix)

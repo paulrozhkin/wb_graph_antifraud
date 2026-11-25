@@ -24,21 +24,27 @@ func NewGraphRepository(endpoint string, client *http.Client) *GraphRepository {
 	return &GraphRepository{endpoint: endpoint, client: client}
 }
 
+// Untyped GraphSON encodes java.util.Date as Unix milliseconds.
+type transferRow struct {
+	entity.Transfer
+	Millis int64 `json:"time"`
+}
+
 func (r *GraphRepository) History(ctx context.Context, accountID string) ([]entity.Transfer, error) {
-	// Untyped GraphSON encodes java.util.Date as Unix milliseconds.
-	var rows []struct {
-		entity.Transfer
-		Millis int64 `json:"time"`
-	}
+	var rows []transferRow
 	if err := r.execute(ctx, historyQuery, map[string]any{"accountId": accountID}, &rows); err != nil {
 		return nil, err
 	}
+	return decodeTransfers(rows), nil
+}
+
+func decodeTransfers(rows []transferRow) []entity.Transfer {
 	transfers := make([]entity.Transfer, 0, len(rows))
 	for _, row := range rows {
 		row.Transfer.Time = time.UnixMilli(row.Millis).UTC()
 		transfers = append(transfers, row.Transfer)
 	}
-	return transfers, nil
+	return transfers
 }
 
 func (r *GraphRepository) execute(ctx context.Context, script string, bindings map[string]any, data any) error {

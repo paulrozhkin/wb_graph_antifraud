@@ -1,1 +1,3 @@
 /.idea/
+/services/graph-service/frontend/node_modules/
+/services/graph-service/frontend/dist/

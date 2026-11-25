@@ -1,10 +1,11 @@
 # Граф аккаунтов для антифрод-анализа
 
-Сервис загружает события переводов из Kafka в JanusGraph, обеспечивает поиск аккаунтов по имени и отдаёт входящие и исходящие переводы через HTTP API. HTTP-сервер и Kafka consumer работают в одном Go-процессе и используют общий репозиторий графа. В графе аккаунты представлены вершинами `account`, а каждый перевод — отдельным направленным ребром `transfer` от отправителя к получателю.
+Сервис загружает события переводов из Kafka в JanusGraph и обеспечивает просмотр графа, поиск аккаунтов и просмотр их переводов в браузере и через HTTP API. HTTP-сервер и Kafka consumer работают в одном Go-процессе и используют общий репозиторий графа. В графе аккаунты представлены вершинами `account`, а каждый перевод — отдельным направленным ребром `transfer` от отправителя к получателю.
 
 ## Использованный стек
 
 - **Go, Gin, Viper** — HTTP API и конфигурация сервиса.
+- **React, Cytoscape.js, Vite** — интерактивный граф, поиск и история переводов.
 - **Apache Kafka 3.9.1, kafka-go** — доставка и обработка событий переводов. Брокер работает в режиме KRaft.
 - **JanusGraph 1.1.0, Gremlin** — модель графа и выборка переводов.
 - **Apache Cassandra 4.0.20** — постоянное хранилище графа. JanusGraph подключается к Cassandra по CQL.
@@ -12,6 +13,10 @@
 - **Docker, Kubernetes, Helm** — сборка образа API и развёртывание сервиса и базы. Для локального запуска используется Minikube.
 
 ## API сервиса
+
+### Полный граф
+
+`GET /api/v1/graph` возвращает объект с массивами `accounts` и `transfers`. Аккаунты без имени отображаются по ID. В массиве переводов сохраняются отдельные рёбра между одними и теми же аккаунтами и переводы себе. При превышении 250 аккаунтов или 500 переводов API возвращает `422 Unprocessable Entity`. [Запрос Gremlin](services/graph-service/internal/repositories/gremlin/graph_snapshot.groovy)
 
 ### Поиск аккаунтов
 
@@ -49,14 +54,16 @@
 
 ```powershell
 minikube start -p wb-graph-lab --driver=docker --kubernetes-version=v1.35.1 --keep-context
-docker build -t wb-graph-api:0.4.0 services/graph-service
-minikube -p wb-graph-lab image load wb-graph-api:0.4.0
+docker build -t wb-graph-api:0.6.1 services/graph-service
+minikube -p wb-graph-lab image load wb-graph-api:0.6.1
 helm --kube-context wb-graph-lab upgrade --install wb-graph ./deployment/helm/wb-graph --namespace wb-graph --create-namespace --wait --timeout 4m
 kubectl --context wb-graph-lab -n wb-graph get pods,svc,pvc
 kubectl --context wb-graph-lab -n wb-graph port-forward service/wb-graph-api 18080:8080
 ```
 
-Пока работает `port-forward`, API доступен на порту 18080. Пример запроса из второго терминала
+Пока работает `port-forward`, интерфейс доступен по адресу [127.0.0.1:18080](http://127.0.0.1:18080/). На вкладке «Граф» можно менять масштаб, выбирать аккаунты и отдельные переводы, открывать историю выбранного аккаунта и обновлять данные. На вкладке «История» запрос `ве` открывает историю Веры.
+
+HTTP API доступен на том же порту. Примеры запросов из второго терминала
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:18080/api/v1/accounts/boris/transfers | Format-Table
@@ -75,6 +82,10 @@ Viper читает настройки HTTP, Gremlin и Kafka из `config.json` 
 | `WB_GRAPH_KAFKA_BROKER` | `kafka.broker` |
 | `WB_GRAPH_KAFKA_TOPIC` | `kafka.topic` |
 | `WB_GRAPH_KAFKA_GROUP_ID` | `kafka.groupId` |
+
+## Разработка интерфейса
+
+В каталоге `services/graph-service/frontend` можно запустить `npm ci` и `npm run dev` на Node.js 22.12 или новее. Vite перенаправляет запросы `/api` на локальный Go-сервис на порту 18080. Сборка Docker помещает готовые файлы React в тот же образ, из которого запускаются HTTP API и Kafka consumer.
 
 ## Загрузка переводов из Kafka
 
@@ -106,5 +117,4 @@ Elasticsearch развёрнут как одноузловой StatefulSet с п
 ## План развития
 
 - **Обработка событий.** Добавить отдельный топик для некорректных сообщений и обработку изменений статуса перевода.
-- **React.** Добавить экран поиска и просмотр переводов найденного аккаунта.
 - **Hadoop HDFS, Spark и Airflow.** Сохранять события в HDFS, считать в Spark число уникальных получателей по каждому аккаунту за сутки и запускать расчёт по расписанию через Airflow.
